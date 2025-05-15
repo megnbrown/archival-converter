@@ -1,0 +1,391 @@
+# ARCHIVAL FILETYPE CONVERTER
+
+# Meg Brown
+# 4/23/2025
+# This program iterates through the files in a given directory, follows the input instruction,
+# and saves the selected filetype as PDFAs or TIFFs. Currently supports file types .pdf, .txt, .png, .jpg, .jpeg, .tif, .tiff, .doc, .docx, and .html.
+
+# PYTHON SETUP NOTE
+# Python project must be saved to Local Disk top level to avoid permissions issues!
+# In the case of persistent permissions issues, run PyCharm as admin.
+
+# Imports
+
+import os
+import os.path
+import sys
+import stat
+import shutil
+from pathlib import Path
+import csv
+from spire.pdf.common import *
+from spire.pdf import *
+from fpdf import FPDF
+import img2pdf
+from PIL import Image
+import textwrap
+import pdfkit
+from docx2pdf import convert
+from spire.doc import *
+from spire.doc.common import *
+import re
+import subprocess
+import pypdf
+from pypdf import *
+import comtypes.client
+
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! NEEDS TO BE COMPLETED FOR SETUP !!!!!!!!!!!!!!
+
+#INSTALLS
+# Use terminal (rectangular option at bottom left of PyCharm screen)
+# Case sensitive, write exactly as shown
+
+#pip install Spire.Pdf.Free
+#pip install fpdf
+#pip install img2pdf
+#pip install Pillow
+#pip install pdfkit
+#pip install wkhtmltopdf
+#pip install docx2pdf
+#pip install Spire.Doc.Free
+#pip install comtypes
+#pip install pypdf
+
+#OTHER INSTRUCTIONS
+# Download wkhtmltopdf from https://wkhtmltopdf.org/downloads.html
+# Make Microsoft print to PDF default printer in settings
+# Mount disk image using FTK Imager (run program as admin)
+# Create destination folder using file explorer
+
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# Change basepath to the location of the desired folder. Should be in the format basepath = r'path'
+
+basepath = r'C:\sourcetestlevel1\sourcetestlevel2\sourcetestlevel6' # THIS IS WHAT IS CHANGED !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+# function that allows a text input (string) to be written to a pdf
+def text_to_pdf(text, filename):
+    a4_width_mm = 210
+    pt_to_mm = 0.35
+    fontsize_pt = 10
+    fontsize_mm = fontsize_pt * pt_to_mm
+    margin_bottom_mm = 10
+    character_width_mm = 7 * pt_to_mm
+    width_text = a4_width_mm / character_width_mm
+
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(True, margin=margin_bottom_mm)
+    pdf.add_page()
+    pdf.set_font(family='Courier', size=fontsize_pt)
+    splitted = text.split('\n')
+
+    for line in splitted:
+        lines = textwrap.wrap(line, width_text)
+
+        if len(lines) == 0:
+            pdf.ln()
+
+        for wrap in lines:
+            pdf.cell(0, fontsize_mm, wrap, ln=1)
+
+    pdf.output(filename, 'F')
+
+output_text = [""]
+
+def redaction(input_text):
+    #creates SSN pattern and finds the pattern in the input text
+    ssn_pattern = re.compile(r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b')
+    ssns_found = re.findall(ssn_pattern, input_text)
+
+    intermediate_text = input_text
+
+    for i in range(0, len(ssns_found), 1):
+        intermediate_text = re.sub(ssns_found[i],"[SS#]", intermediate_text)
+
+    line = intermediate_text.strip()
+    line = re.sub(r'\w*(?:[\.\-\_]\w+)@[A-Za-z]*\.?[A-Za-z0-9]*', "[email]", line) #redacts emails with dashes or other characters
+    #if the replacement string for email is changed it must be changed everywhere including in regex string
+    line = re.sub(r'[A-Za-z0-9]*@[A-Za-z]*\.?[A-Za-z0-9]*', "[email]", line) #redacts normally formatted emails
+    line = re.sub(r'[A-Za-z0-9]*\.\[email\]', "[email]", line)  # redacts emails with periods
+    line = re.sub(r'\b\d{3}\.\d{2}\.\d{4}\b', "[SS#]", line) #redacts SSN with periods
+    line = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', "[IP]", line) #redacts IP address
+    line = " ".join(line.split())
+
+    output_text[0] = line
+
+#warning: this method ruins hyperlinks
+#done this way to get around 10 page limit
+def PDFconv(pdf, output):
+    # creating pdf file writer object
+    reader = PdfReader(pdf)
+    pdfWriter = PdfWriter()
+    page_len = len(reader.pages)
+
+    splits = []
+    pdfs_split = []
+
+    if page_len > 10:
+        int1 = page_len
+        while int1 > 10:
+            int1 = int1 - 10
+            splits.append(int1)
+
+        splits = splits[::-1]
+        start = 0
+        end = splits[0]
+
+        for i in range(len(splits) + 1):
+            # creating pdf writer object for (i+1)th split
+            writer = PdfWriter()
+
+            # output pdf file name
+            outputpdf = pdf.split('.pdf')[0] + " " + str(i) + '.pdf'
+            #print("outputpdf is" + str(outputpdf))
+            pdfs_split.append(outputpdf)
+
+            # adding pages to pdf writer object
+            for page in range(start, end):
+                writer.add_page(reader.pages[page])
+
+            # writing split pdf pages to pdf file
+            with open(outputpdf, "wb") as f:
+                writer.write(f)
+
+            # interchanging page split start position for next split
+            start = end
+            try:
+                # setting split end position for next split
+                end = splits[i + 1]
+            except IndexError:
+                # setting split end position for last split
+                end = len(reader.pages)
+
+        for pdf in pdfs_split:
+            current_pdf = PdfDocument(pdf)
+            conformance_level = current_pdf.Conformance
+
+            if conformance_level != "Pdf_A1A":
+                converter = PdfStandardsConverter(pdf)
+                converter.ToPdfA1A(pdf)
+                converter.Dispose()
+
+            current_pdf.Close()
+            pdfWriter.append(pdf)
+
+            # writing combined pdf to output pdf file
+        with open(output, 'wb') as f:
+            pdfWriter.write(f)
+
+        for name in pdfs_split:
+            if os.path.isfile(name):
+                os.remove(name)
+
+    else: #converts normally if less than 10 pages
+        current_pdf = PdfDocument(pdf)
+        conformance_level = current_pdf.Conformance
+
+        if conformance_level != "Pdf_A1A":
+            converter = PdfStandardsConverter(pdf)
+            converter.ToPdfA1A(output)
+            converter.Dispose()
+
+        current_pdf.Close()
+
+#main program
+
+print("MAKE SURE NO FILES FROM BASEPATH ARE OPEN!")
+
+error_log = [] #creates error log
+
+print("Options:\n1: PDF -> PDFA\n2: DOC and DOCX -> PDFA\n3: TXT -> PDFA\n4: TXT -> PDFA WITH REDACTION\n5: Images (JPG, JPEG, TIF) -> TIFF\n6: HTML -> PDFA")
+command = input("\nEnter the number of the option you wish to select: ")
+
+for subdir, dirs, files in os.walk(basepath):
+    for file in files:
+        filepath = subdir + os.sep + file
+        split_off_file_extension = filepath.split(".")
+        new_path = ""
+        for i in range(0, len(split_off_file_extension) - 1, 1):
+            new_path = new_path + split_off_file_extension[i] + "."
+        new_path_pdf = new_path + "pdf"
+        new_path_tiff = new_path + "tiff"
+        new_path_docx = new_path + "docx"
+
+        if command == "1": #PDF
+            if filepath.endswith(".pdf"):
+                try:
+                    PDFconv(filepath, filepath)
+
+                except SpireException as e:
+                    error_log.append(str(e))
+                    print("ERROR: could not process " + file)
+                    continue
+
+                if os.path.isfile(new_path_pdf):
+                    print("File " + file + " successfully converted to PDFA.")
+
+
+
+        elif command == "2": #DOC AND DOCX
+            if filepath.endswith(".docx") or filepath.endswith(".doc"):
+                try:
+                    print("Working on file: " + file + " from location " + filepath)
+                    if file[0] == "~" and file[1] == "$":
+                        print("Temp file " + file + " skipped. See error log.")
+                        error_log.append("Temp .docx file recognized at " + filepath + " and copied without conversion.")
+                        continue
+
+                    wdFormatPDF = 17
+
+                    in_file = filepath
+                    out_file = new_path_pdf
+
+                    word = comtypes.client.CreateObject('Word.Application')
+                    doc = word.Documents.Open(in_file)
+                    doc.SaveAs(out_file, FileFormat=wdFormatPDF)
+                    doc.Close()
+                    word.Quit()
+
+                    #removed to avoid ruining hyperlinks
+                    #saves as pdfa anyway???
+                    #PDFconv(new_path_pdf, new_path_pdf)
+
+                    if os.path.isfile(filepath):
+                        os.remove(filepath)
+
+                except SpireException as e:
+                    error_log.append(str(e))
+                    print("ERROR: could not process " + file)
+                    continue
+
+                if os.path.isfile(new_path_pdf):
+                    print("File " + file + " successfully converted to PDFA.")
+
+        elif command == "3": #TXT
+            if filepath.endswith(".txt"):
+                print("Working on file: " + file + " from location " + filepath)
+                #try:
+                int_path = basepath + "\\int.txt"
+
+                fields = []
+                rows = []
+
+                with open(filepath, 'r') as csvfile:
+                    csvreader = csv.reader(csvfile, delimiter='\\')
+                    for row in csvreader:
+                        rows.append(row)
+
+                with open(int_path, 'w', newline="") as file_save:
+                    for i in range(0, len(rows)): #used to be -1
+                        int_row = rows[i]
+                        if len(int_row) == 1:
+                            int_str = int_row[0]
+                            file_save.write(int_str + "\n")
+                        else:
+                            file_save.write("\n")
+
+                with open(int_path, "r") as open_file:
+                    text = open_file.read()
+                    safe_text = text.encode('utf-8')
+                    int_text = safe_text.decode('latin-1', 'ignore')
+                    text_to_pdf(int_text, new_path_pdf)
+
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+
+                if os.path.isfile(int_path):
+                    os.remove(int_path)
+
+                PDFconv(new_path_pdf, new_path_pdf)
+
+                if os.path.isfile(new_path_pdf):
+                    print("File " + file + " successfully converted to PDFA.")
+
+                #except UnicodeEncodeError as e:
+                    #error_log.append(str(e))
+
+
+        elif command == "4": #TXT WITH REDACTION
+            if filepath.endswith(".txt"):
+                print("Working on file: " + file + " from location " + filepath)
+
+                int_path = basepath + "\\int.txt"
+
+                fields = []
+                rows = []
+
+                with open(filepath, 'r') as csvfile:
+                    csvreader = csv.reader(csvfile, delimiter='\\')
+                    for row in csvreader:
+                        rows.append(row)
+
+                    for i in range(0, len(rows)): #used to be -1
+                        int_row = rows[i]
+                        if len(int_row) == 1:
+                            int_str = int_row[0]
+                            redaction(int_str)
+                            rows[i] = [output_text[0]]
+
+                with open(int_path, 'w', newline="") as file_save:
+                    for i in range(0, len(rows)): #used to be -1
+                        int_row = rows[i]
+                        if len(int_row) == 1:
+                            int_str = int_row[0]
+                            file_save.write(int_str + "\n")
+                        else:
+                            file_save.write("\n")
+
+                with open(int_path, "r") as open_file:
+                    text = open_file.read()
+                    safe_text = text.encode('latin-1', 'ignore')
+                    int_text = safe_text.decode('latin-1')
+                    text_to_pdf(int_text, new_path_pdf)
+
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+
+                if os.path.isfile(int_path):
+                    os.remove(int_path)
+
+                PDFconv(new_path_pdf, new_path_pdf)
+
+                if os.path.isfile(new_path_pdf):
+                    print("File " + file + " successfully redacted and converted to PDFA.")
+
+        elif command == "5": #IMAGES
+            if filepath.endswith(".jpg") or filepath.endswith(".png") or filepath.endswith(".jpeg") or filepath.endswith(".tif"):
+                print("Working on file: " + file + " from location " + filepath)
+                image = Image.open(filepath)
+                image.save(new_path_tiff)
+
+                image.close()
+
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+
+                if os.path.isfile(new_path_tiff):
+                    print("File " + file + " successfully converted to TIFF.")
+
+        elif command == "6": #HTML
+            if filepath.endswith(".html"):
+                print("Working on file: " + file + " from location " + filepath)
+                abs_path_html = os.path.abspath(filepath)  # stops html error
+
+                config = pdfkit.configuration(wkhtmltopdf=r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe')
+                pdfkit.from_file(abs_path_html, new_path_pdf, configuration=config, options={"enable-local-file-access": ""})
+
+                PDFconv(new_path_pdf, new_path_pdf)
+
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+
+                if os.path.isfile(new_path_pdf):
+                    print("File " + file + " successfully converted to PDFA.")
+
+        else:
+            print("Selection not recognized.")
+            exit()
+
+print("\nERROR LOG:")
+for error in error_log:
+    print(error)
+print("\nEND")
